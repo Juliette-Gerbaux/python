@@ -18,7 +18,7 @@ def optModel_thermic(study: Study):
         exports[area.name] = [0]*H
     for a1 in study.list_areas:
         for a2 in study.list_areas:
-            if a2.name in study.links[a1.name]:
+            if (a1.name in study.links) and (a2.name in study.links[a1.name]):
                 exchange = [xp.var(f"exchange_{a1.name}_{a2.name}_{h}",lb = 0, ub =  study.links[a1.name][a2.name][0]) for h in range(H)] 
                 model.addVariable(exchange)
                 for h in range(H):
@@ -39,11 +39,24 @@ def optModel_thermic(study: Study):
         model.addVariable (w) # Uncertain
 
         for thermal_unit in area.list_thermal_units :
-            t = [xp.var(f"t_{area.name}_{thermal_unit.name}_{i}",lb = thermal_unit.P_min, ub =  thermal_unit.P_max) for i in range(H)]
+            t = [xp.var(f"t_{area.name}_{thermal_unit.name}_{i}",lb = 0, ub =  thermal_unit.P_max) for i in range(H)]
             model.addVariable (t) 
+            state_on = [xp.var(f"on_{area.name}_{thermal_unit.name}_{i}",vartype=xp.binary) for i in range(H)]
+            model.addVariable (state_on) 
+            start_up = [xp.var(f"up_{area.name}_{thermal_unit.name}_{i}",vartype=xp.binary) for i in range(H)]
+            model.addVariable (start_up)
             for h in range(H):
                 total_prod[h] += t[h]
-                total_cost[h] += t[h]*thermal_unit.marginal_cost
+                total_cost[h] += t[h]*thermal_unit.marginal_cost 
+                total_cost[h] += state_on[h]*thermal_unit.fixed_cost
+                total_cost[h] += start_up[h]*thermal_unit.start_up_cost
+                model.addConstraint(state_on[h]*thermal_unit.P_max>=t[h])
+                model.addConstraint(state_on[h]*thermal_unit.P_min<=t[h])
+                if h>=1:
+                    model.addConstraint(start_up[h]>=state_on[h]-state_on[h-1])
+                else :
+                    model.addConstraint(start_up[h]>=state_on[h])
+
        
         # Not served energy
         ens = [xp.var(f"ens_{area.name}_{i}") for i in range(H)]
@@ -119,6 +132,7 @@ def optModel_exact(study: Study, area: Area, reservoir: Reservoir, s, V, debut, 
     for h in range(H):
         model.addConstraint(q[h+1] == q[h] + r[h] + inflow)               # Stock evolution equation
 
+    assert(len(X)>=2)
     # Future cost: piecewise representation of the future cost
     for i in range(len(X)-1):
         if (V[i+1, s+1]<float('inf'))&(V[i, s+1]<float('inf')):
@@ -140,14 +154,12 @@ def optModel_exact(study: Study, area: Area, reservoir: Reservoir, s, V, debut, 
     
     return (model)
 
-
-def SDP_exact(study: Study, area, reservoir, debut, X):
+def SDP_exact(study: Study, area:Area, reservoir:Reservoir, debut:bool, X):
     V = np.zeros((len(X), S+1))
     if debut:
         pen = get_penalties(debut,S)
         for i in range(len(X)):
             V[i,S] = pen(X[i])
-
     for s in range(51,-1,-1):
         model = optModel_exact(study, area, reservoir, s, V, debut, X)
         for i in range(len(X)): # state boucle x 
@@ -157,12 +169,13 @@ def SDP_exact(study: Study, area, reservoir, debut, X):
                 model.chgbounds(["inflow","inflow"],['L','U'],[reservoir.inflow[s,k],reservoir.inflow[s,k]])
                 for a in study.list_areas:
                     model.chgbounds([f"load_{a.name}_{j}" for j in range(H)]*2,['L']*H+['U']*H,list(a.load[s,:,k])+list(a.load[s,:,k]))
+                # return(model, s, X[i])
                 model.solve()
                 Vx = Vx + model.getObjVal()
             V[i, s] = Vx/study.nb_mc
     return (V)
 
-def OpModel_weeklycost(study, area, reservoir):
+def OpModel_weeklycost(study:Study, area:Area, reservoir:Reservoir):
     model = optModel_thermic(study)
 
     u = xp.var("u",lb = float('-inf'), ub =  float('inf'))
@@ -194,7 +207,7 @@ def OpModel_weeklycost(study, area, reservoir):
     return (model)
 
 
-def WeeklyCost(study, area, reservoir, u):
+def WeeklyCost(study:Study, area:Area, reservoir:Reservoir, u):
     model = OpModel_weeklycost(study, area, reservoir)
     L = np.zeros((S,study.nb_mc))
     model.chgbounds(["u","u"],['L','U'],[u,u])
@@ -206,7 +219,7 @@ def WeeklyCost(study, area, reservoir, u):
             L[s,k] = model.getObjVal()
     return(L)
 
-def SDP_precalculated_rewards(study, reservoir, debut, Gu, X, U):    
+def SDP_precalculated_rewards(study:Study, reservoir:Reservoir, debut:bool, Gu, X, U):    
     V = np.zeros((len(X), S+1))
 
     if debut:
@@ -262,7 +275,7 @@ def SDP_precalculated_rewards(study, reservoir, debut, Gu, X, U):
                 V[i, s] = Vu/study.nb_mc + V[i,s]
     return V
 
-def get_penalties(study, reservoir, for_beginning_of_week,s):
+def get_penalties(study:Study, reservoir:Reservoir, for_beginning_of_week:bool,s:int):
     if for_beginning_of_week:
         if s>=1:
             pen = interp1d([0,reservoir.Xmin[s-1],reservoir.Xmax[s-1],reservoir.capacity],[-study.pen_low*(reservoir.Xmin[s-1]),0,0,-study.pen_high*(reservoir.capacity-reservoir.Xmax[s-1])])
@@ -272,12 +285,13 @@ def get_penalties(study, reservoir, for_beginning_of_week,s):
         pen = interp1d([0,reservoir.Xmin[s],reservoir.Xmax[s],reservoir.capacity],[-study.pen_low*(reservoir.Xmin[s]),0,0,-study.pen_high*(reservoir.capacity-reservoir.Xmax[s])])
     return(pen)
 
-def solve_and_plot(m, study):
+def solve_and_plot(m, study:Study, s, x):
     m.solve()
     vars = m.getVariable()
     sol = m.getSolution()
 
-    fig, ax = plt.subplots(2*len(study.list_areas), sharex='all',figsize=(7,5*len(study.list_areas)))
+    nb_plot = 3
+    fig, ax = plt.subplots(nb_plot*len(study.list_areas), sharex='all',figsize=(7,2.5*nb_plot*len(study.list_areas)))
     j = 0
     for a in study.list_areas:
         conso = [sol[i] for i in range(len(vars)) if f"load_{a.name}_" in vars[i].name]
@@ -289,7 +303,7 @@ def solve_and_plot(m, study):
             prod_plus[f"Turb_r_{r.name}"] = np.array([max(-sol[i],0) for i in range(len(vars)) if f"r_" in vars[i].name])
         prod_plus[f"ENS_{a.name}"] = np.array([sol[i] for i in range(len(vars)) if f"ens_{a.name}_" in vars[i].name])
         for a2 in study.list_areas:
-            if a.name in study.links[a2.name]:
+            if (a2.name in study.links) and (a.name in study.links[a2.name]):
                 prod_plus[f"exchange_{a2.name}_{a.name}"] = np.array([sol[i] for i in range(len(vars)) if f"exchange_{a2.name}_{a.name}_" in vars[i].name])
         ax[j].stackplot(np.arange(H), prod_plus.values(),
                 labels=prod_plus.keys())
@@ -306,7 +320,7 @@ def solve_and_plot(m, study):
             prod_minus[f"Pump_r_{r.name}"] = np.array([max(sol[i],0) for i in range(len(vars)) if f"r_" in vars[i].name])
         prod_minus[f"spill_{a.name}"] = np.array([-sol[i] for i in range(len(vars)) if f"spill_{a.name}_" in vars[i].name])
         for a2 in study.list_areas:
-            if a2.name in study.links[a.name]:
+            if (a.name in study.links) and (a2.name in study.links[a.name]):
                 prod_minus[f"exchange_{a.name}_{a2.name}"] = np.array([sol[i] for i in range(len(vars)) if f"exchange_{a.name}_{a2.name}_" in vars[i].name])
         # assert(np.all(prod_plus-conso-prod_minus)==0) 
         ax[j+1].stackplot(np.arange(H), prod_minus.values(),
@@ -314,7 +328,16 @@ def solve_and_plot(m, study):
         ax[j+1].legend()
         ax[j+1].grid(True)
         ax[j+1].set_title(f"{a.name}")
-        j += 2
+
+        for th in a.list_thermal_units:
+            ax[j+2].plot([sol[i]*th.P_max for i in range(len(vars)) if f"on_{a.name}_{th.name}_" in vars[i].name],label=f"On_th_{th.name}")
+            ax[j+2].plot([sol[i] for i in range(len(vars)) if f"t_{a.name}_{th.name}_" in vars[i].name],label=f"Prod_th_{th.name}")
+            ax[j+2].plot([sol[i]*th.P_max for i in range(len(vars)) if f"up_{a.name}_{th.name}_" in vars[i].name],label=f"Up_th_{th.name}")
+        ax[j+2].legend()
+        ax[j+2].grid(True)
+        ax[j+2].set_title(f"{a.name}")
+
+        j += nb_plot
 
     plt.show()
 
@@ -322,9 +345,9 @@ def solve_and_plot(m, study):
         for r in a.list_reservoirs:
             fig, ax = plt.subplots()
             u = np.array([sol[i] for i in range(len(vars)) if f"r_" in vars[i].name])
-            ax.plot(np.cumsum(u)+r.initial_level, label=f"r_{r.name}")
-            ax.plot(r.Xmin[0].repeat(H))
-            ax.plot(r.Xmax[0].repeat(H))
+            ax.plot(np.cumsum(u)+x, label=f"r_{r.name}")
+            ax.plot(r.Xmin[s].repeat(H))
+            ax.plot(r.Xmax[s].repeat(H))
             ax.legend()
             ax.set_title(f"{a.name}")
             plt.show()
