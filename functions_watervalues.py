@@ -241,7 +241,7 @@ def SDP_precalculated_rewards(study:Study, reservoir:Reservoir, debut:bool, Gu, 
                 
                 for i_fut in range(len(X)):
                     u = -X[i_fut] + X[i] + reservoir.inflow[s,k]*H
-                    if np.min(U) <= u <= np.min(U):
+                    if np.min(U) <= u <= np.max(U):
                         G = Gs(u)
                         if not(debut):
                             penalty = pen(X[i_fut])

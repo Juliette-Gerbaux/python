@@ -20,21 +20,31 @@ class ThermalUnit:
 
 class Reservoir:
 
-    def __init__(self, initial_level:float, P_turb:float, P_pump:float, rho:float, dir_study:str, name_area:str, name:str):
-        self.initial_level = initial_level
-        self.P_turb = P_turb
-        self.P_pump = P_pump
-        self.capacity = -rho*P_turb
+    def __init__(self, capacity:float, efficiency:float, dir_study:str, name_area:str, name:str):
+        
+        self.capacity = capacity
 
-        courbes_guides = np.loadtxt(dir_study+"/input/hydro/common/capacity/reservoir_"+name_area+".txt")[6:365:7,[0,2]]*self.capacity # on récupère les valeurs du dimanche
-        Xmin = courbes_guides[:,0]
-        Xmax = courbes_guides[:,1]
+        courbes_guides = np.loadtxt(dir_study+"/input/hydro/common/capacity/reservoir_"+name_area+".txt")[:,[0,2]]*self.capacity
+        if (courbes_guides[0,0]==courbes_guides[0,1]):
+            self.initial_level = courbes_guides[0,0]
+        else :
+            print("Problème avec le niveau initial")
+        Xmin = courbes_guides[6:365:7,0]
+        Xmax = courbes_guides[6:365:7,1]
         self.Xmin = np.concatenate((Xmin,Xmin[[0]]))
         self.Xmax = np.concatenate((Xmax,Xmax[[0]]))
+        
 
         self.inflow = np.loadtxt(dir_study+"/input/hydro/series/"+name_area+"/mod.txt")[6:365:7]*7/H 
         assert("_" not in name)
         self.name = name
+
+        P_turb = np.loadtxt(dir_study+"/input/hydro/common/capacity/maxpower_"+name_area+".txt")[:,0]
+        P_pump = np.loadtxt(dir_study+"/input/hydro/common/capacity/maxpower_"+name_area+".txt")[:,2]
+        self.P_turb = P_turb
+        self.P_pump = P_pump
+        self.efficiency = efficiency
+
 
 ThermalUnits = NewType("ThermalUnits",list[ThermalUnit])
 Reservoirs = NewType("Reservoirs",list[Reservoir])
