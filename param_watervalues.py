@@ -20,7 +20,7 @@ class ThermalUnit:
 
 class Reservoir:
 
-    def __init__(self, capacity:float, efficiency:float, dir_study:str, name_area:str, name:str):
+    def __init__(self, capacity:float, efficiency:float, dir_study:str, name_area:str, name:str, final_level:bool=True):
         
         self.capacity = capacity
 
@@ -33,6 +33,9 @@ class Reservoir:
         Xmax = courbes_guides[6:365:7,1]
         self.Xmin = np.concatenate((Xmin,Xmin[[0]]))
         self.Xmax = np.concatenate((Xmax,Xmax[[0]]))
+        if final_level:
+            self.Xmin[51] = self.Xmin[52]
+            self.Xmax[51] = self.Xmax[52]
         
 
         self.inflow = np.loadtxt(dir_study+"/input/hydro/series/"+name_area+"/mod.txt")[6:365:7]*7/H 
