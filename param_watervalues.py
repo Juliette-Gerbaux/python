@@ -34,8 +34,8 @@ class Reservoir:
         self.Xmin = np.concatenate((Xmin,Xmin[[0]]))
         self.Xmax = np.concatenate((Xmax,Xmax[[0]]))
         if final_level:
-            self.Xmin[51] = self.Xmin[52]
-            self.Xmax[51] = self.Xmax[52]
+            self.Xmin[51] = self.initial_level
+            self.Xmax[51] = self.initial_level
         
 
         self.inflow = np.loadtxt(dir_study+"/input/hydro/series/"+name_area+"/mod.txt")[6:365:7]*7/H 
