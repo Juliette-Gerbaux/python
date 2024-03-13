@@ -3,7 +3,6 @@ import numpy as np
 from scipy.interpolate import interp1d
 from time import time
 from random import randint, seed
-from data_iterative import S,H,NTrain
 
 xp.controls.outputlog = 0
 xp.controls.threads = 1
@@ -15,7 +14,7 @@ xp.setOutputEnabled(False)
 
 class Reservoir:
 
-    def __init__(self, capacity:float, efficiency:float, dir_study:str, name_area:str, name:str, final_level:bool=True):
+    def __init__(self, capacity:float, efficiency:float, dir_study:str, name_area:str, name:str, final_level:bool=True, S=52, H=168, NTrain=1):
         
         self.capacity = capacity
 
@@ -50,7 +49,7 @@ def retrieve_problem(year,week,output_path,itr=1):
     model.read(output_path+f"/problem-{year}-{week}--optim-nb-{itr}.mps")
     return(model)
 
-def create_weekly_problem_itr(k,s,output_path, reservoir, pen_low, pen_high,pen_final):
+def create_weekly_problem_itr(k,s,output_path, reservoir, pen_low, pen_high,pen_final, S, H):
     model = retrieve_problem(k+1,s+1,output_path)
     
 
@@ -119,7 +118,7 @@ def modify_weekly_problem_itr(m,control,rstatus,cstatus,i,basis,control_basis):
         
         raise(ValueError)
     
-def calculate_VU(reward, reservoir,X,U, pen_low, pen_high, pen_final):
+def calculate_VU(reward, reservoir,X,U, pen_low, pen_high, pen_final, S, H, NTrain):
     V = np.zeros((len(X), S+1, NTrain))
 
     for s in range(S-1,-1,-1):
@@ -170,7 +169,7 @@ def calculate_VU(reward, reservoir,X,U, pen_low, pen_high, pen_final):
         V[:,s,:] = np.repeat(np.mean(V[:,s,:],axis=1,keepdims=True),NTrain,axis=1)
     return np.mean(V,axis=2)
 
-def compute_x_multi_scenario(reservoir,X,U,V,reward,pen_low,pen_high, pen_final, itr):
+def compute_x_multi_scenario(reservoir,X,U,V,reward,pen_low,pen_high, pen_final, itr, S, H, NTrain):
     initial_x = np.zeros((S+1,NTrain))
     initial_x[0] = reservoir.initial_level
     np.random.seed(19*itr)
@@ -228,7 +227,7 @@ def compute_x_multi_scenario(reservoir,X,U,V,reward,pen_low,pen_high, pen_final,
 
     return(initial_x, controls)
 
-def find_likely_control(reservoir,X,U,V,reward,pen_low,pen_high, pen_final, level_i, s, k):
+def find_likely_control(reservoir,X,U,V,reward,pen_low,pen_high, pen_final, level_i, s, k,S,H):
     
     V_fut = interp1d(X, V[:, s+1])
         
@@ -277,7 +276,7 @@ def find_likely_control(reservoir,X,U,V,reward,pen_low,pen_high, pen_final, leve
 
     return(control)
 
-def compute_upper_bound(reservoir,list_models,X,U,V,G,pen_low,pen_high,pen_final,control_basis,basis):
+def compute_upper_bound(reservoir,list_models,X,U,V,G,pen_low,pen_high,pen_final,control_basis,basis,S,H,NTrain):
     
     current_itr = np.zeros((S,NTrain,3))
     current_basis =[[[] for k in range(NTrain)] for s in range(S)]
@@ -298,7 +297,7 @@ def compute_upper_bound(reservoir,list_models,X,U,V,G,pen_low,pen_high,pen_final
 
             m[0].chgobj([m[6],m[5]], [1,1])
 
-            likely_control = find_likely_control(reservoir,X,U,V,G,pen_low,pen_high, pen_final, level_i, s, k)
+            likely_control = find_likely_control(reservoir,X,U,V,G,pen_low,pen_high, pen_final, level_i, s, k,S,H)
             
             u = np.argmin(np.abs(np.array(control_basis[s][k])-likely_control))
             m[0].loadbasis(basis[u][s][k][0],basis[u][s][k][1])
@@ -391,7 +390,7 @@ def update_reward_approximation(reward,points,lamb,beta,new_control):
     
     return(new_reward,new_points)
 
-def calculate_reward(controls, list_models, basis, control_basis, G, U, i):
+def calculate_reward(controls, list_models, basis, control_basis, G, U, i, S, NTrain):
     current_itr = np.zeros((S,NTrain,3))
     current_basis =[[[] for k in range(NTrain)] for s in range(S)]
     
@@ -411,7 +410,7 @@ def calculate_reward(controls, list_models, basis, control_basis, G, U, i):
 
     return(current_basis,current_itr,control_basis,G,U)
 
-def itr_control(reservoir:Reservoir, output_path, pen_low, pen_high,X, N, pen_final, tol_gap):
+def itr_control(reservoir:Reservoir, output_path, pen_low, pen_high,X, N, pen_final, tol_gap, S, H, NTrain):
 
     tot_t = []
     debut = time()
@@ -419,7 +418,7 @@ def itr_control(reservoir:Reservoir, output_path, pen_low, pen_high,X, N, pen_fi
     list_models = [[] for i in range(S)]
     for s in range(S):
         for k in range(NTrain):
-            m = create_weekly_problem_itr(k=k,s=s,output_path=output_path,reservoir=reservoir,pen_low=pen_low,pen_high=pen_high,pen_final=pen_final)
+            m = create_weekly_problem_itr(k=k,s=s,output_path=output_path,reservoir=reservoir,pen_low=pen_low,pen_high=pen_high,pen_final=pen_final,S=S,H=H)
             list_models[s].append(m)
     
     V = np.zeros((len(X), S+1))
@@ -439,22 +438,22 @@ def itr_control(reservoir:Reservoir, output_path, pen_low, pen_high,X, N, pen_fi
     while (gap>=tol_gap and gap>=0) and i <N : #and (i<3):
         debut = time()
 
-        initial_x, controls = compute_x_multi_scenario(reservoir=reservoir,X=X,U=U,V=V,reward=G,pen_low=pen_low,pen_high=pen_high, pen_final=pen_final, itr=i)
+        initial_x, controls = compute_x_multi_scenario(reservoir=reservoir,X=X,U=U,V=V,reward=G,pen_low=pen_low,pen_high=pen_high, pen_final=pen_final, itr=i, S=S, H=H, NTrain=NTrain)
         traj.append(np.array(initial_x))
 
-        current_basis,current_itr,control_basis,G,U = calculate_reward(controls=controls, list_models=list_models, basis=basis, control_basis=control_basis, G=G, U=U, i=i)
+        current_basis,current_itr,control_basis,G,U = calculate_reward(controls=controls, list_models=list_models, basis=basis, control_basis=control_basis, G=G, U=U, i=i,S=S,NTrain=NTrain)
         itr_tot.append(current_itr)
         basis.append(current_basis)
 
-        V = calculate_VU(reward=G,reservoir=reservoir,X=X,U=U,pen_low=pen_low,pen_high=pen_high, pen_final=pen_final)
+        V = calculate_VU(reward=G,reservoir=reservoir,X=X,U=U,pen_low=pen_low,pen_high=pen_high, pen_final=pen_final, S=S, H=H, NTrain=NTrain)
         V_fut = interp1d(X, V[:, 0])
         V0 = V_fut(reservoir.initial_level)
             
-        upper_bound, controls, current_itr, current_basis, control_basis = compute_upper_bound(reservoir,list_models,X,U,V,G,pen_low,pen_high,pen_final,control_basis,basis)
+        upper_bound, controls, current_itr, current_basis, control_basis = compute_upper_bound(reservoir,list_models,X,U,V,G,pen_low,pen_high,pen_final,control_basis,basis, S=S, H=H, NTrain=NTrain)
         itr_tot.append(current_itr)
         basis.append(current_basis)        
         controls_upper.append(controls)
-        
+
         gap = upper_bound+V0
         print(gap, upper_bound,-V0)
         gap = gap/-V0
